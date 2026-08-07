@@ -1,0 +1,29 @@
+{
+  "total_requests": 35,
+  "blocked_requests": 30,
+  "block_rate": 0.8571428571428571,
+  "rate_limit_hits": 5,
+  "judge_checks": 18,
+  "judge_fails": 13,
+  "judge_fail_rate": 0.7222222222222222,
+  "alerts": [
+    {
+      "metric": "block_rate",
+      "value": 0.8571428571428571,
+      "threshold": 0.5,
+      "message": "Block rate 86% exceeds 50% — possible attack wave."
+    },
+    {
+      "metric": "rate_limit_hits",
+      "value": 5.0,
+      "threshold": 5.0,
+      "message": "Rate-limit hits (5) >= 5."
+    },
+    {
+      "metric": "judge_fail_rate",
+      "value": 0.7222222222222222,
+      "threshold": 0.3,
+      "message": "Judge FAIL rate 72% exceeds 30%."
+    }
+  ]
+}

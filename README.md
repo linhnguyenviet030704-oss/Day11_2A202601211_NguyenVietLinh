@@ -1,5 +1,8 @@
 # Day 11 — Controlled Agent Security (2026)
 
+**Họ tên:** Nguyễn Việt Linh  
+**MSSV:** 2A202601211  
+
 Làm sao để ứng dụng agent an toàn hơn?
 
 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).
@@ -133,9 +136,22 @@ python main.py --part 4    # sau TODO 11–12
 python main.py --part 5    # sau TODO 8 → outputs/results.json (+ audit/metrics)
 ```
 
+Lấy key: [Google AI Studio](https://aistudio.google.com/apikey)
+
+### Hạng mục A — Phòng thủ (làm trước)
+
+1. Code trong `src/assignment/` (dùng lại `src/guardrails/`, `src/hitl/`)
+2. Chạy Test 1–4 → `outputs/results.json`, `audit_log.json`, `metrics.json`
+3. Báo cáo: `report/2A202601211_report.md`
+4. Chi tiết: đề bài mục **Hạng mục A — Phòng thủ**
+
 ```powershell
-pytest tests/smoke -q
-pytest tests/public -q
+$env:PYTHONPATH = "src"
+python -m assignment.pipeline
+# hoặc: cd src; python main.py --part 5
+
+python -m pytest tests/smoke -q
+python -m pytest tests/public -q
 python scripts/grade.py --submission-dir . --out outputs/grade_report.json
 ```
 
@@ -143,7 +159,7 @@ Viết `report/<MSSV>_report.md`.
 
 ### Phần B — Red team và bonus
 
-1. Viết ≥5 prompt vào `src/attacks/attacks.py`
+1. Prompt trong `src/attacks/attacks.py` (≥5 kỹ thuật)
 2. Chạy (tấn công **unsafe** rồi **guards**):
 
 ```powershell
@@ -153,8 +169,6 @@ python main.py --part 1
 
 3. Unsafe = attack target để phân tích. Guards (`src/agents/guards_agent.py`) = **bonus chỉ khi verifier replay xác nhận leak**.
 4. Lưu `outputs/attack_results.json` làm evidence; không tự cấp runtime score hoặc bonus.
-
-Colab / Jupyter (tuỳ chọn): `notebooks/lab11_guardrails_hitl.ipynb`. Local là đủ.
 
 Nộp theo [`SUBMISSION.md`](SUBMISSION.md).
 
@@ -167,13 +181,13 @@ Nộp theo [`SUBMISSION.md`](SUBMISSION.md).
 ├── SUBMISSION.md                      ← Quy định nộp
 ├── data/pii_hallucination_samples.json ← PII + ground_truth đối chiếu hallucination
 ├── src/
-│   ├── assignment/                    ← Hạng mục A (Phòng thủ) — starters
+│   ├── assignment/                    ← Hạng mục A (Phòng thủ)
 │   ├── attacks/                       ← Hạng mục B (Tấn công)
 │   ├── agents/security_boundary.py    ← Reference provenance / action boundary
 │   ├── agents/guards_agent.py         ← Guards Agent (mục tiêu bonus)
 │   ├── guardrails/ testing/ hitl/     ← Module hỗ trợ phòng thủ
 │   └── main.py
-├── notebooks/lab11_guardrails_hitl.ipynb
+├── report/2A202601211_report.md
 ├── schemas/results.schema.json
 ├── scripts/grade.py
 ├── tests/

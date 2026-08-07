@@ -8,12 +8,25 @@ Usage:
     python main.py --part 2     # Run only Part 2 (guardrails)
     python main.py --part 3     # Run only Part 3 (testing pipeline)
     python main.py --part 4     # Run only Part 4 (HITL design)
+    python main.py --part 5     # Run assignment defense suite (A)
 """
+import json
 import sys
 import asyncio
 import argparse
+from pathlib import Path
 
 from core.config import setup_api_key
+
+# A default Windows console is cp1252 and raises UnicodeEncodeError on the
+# Vietnamese text printed below, which would kill the run before any output
+# file is written.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+STUDENT_ID = "2A202601211"
+ROOT = Path(__file__).resolve().parents[1]
+OUTPUTS = ROOT / "outputs"
 
 
 async def part1_attacks():
@@ -26,7 +39,6 @@ async def part1_attacks():
     from agents.guards_agent import create_guards_agent
     from attacks.attacks import run_attacks, generate_ai_attacks, save_attack_results
 
-    # --- Unsafe (required for hạng mục B) ---
     unsafe_agent, unsafe_runner = create_unsafe_agent()
     await test_agent(unsafe_agent, unsafe_runner)
 
@@ -35,7 +47,6 @@ async def part1_attacks():
         unsafe_agent, unsafe_runner, target_name="unsafe"
     )
 
-    # --- Guards (điểm cộng only if leaked=true here) ---
     print("\n--- Attacks on GUARDS agent (điểm cộng nếu LEAKED) ---")
     guards_agent, guards_runner = create_guards_agent()
     guards_results = await run_attacks(
@@ -49,6 +60,7 @@ async def part1_attacks():
         unsafe_results=unsafe_results,
         guards_results=guards_results,
         ai_attacks=ai_attacks,
+        student_id=STUDENT_ID,
     )
 
     bonus_leaks = sum(1 for r in guards_results if r.get("leaked"))
@@ -62,6 +74,20 @@ async def part1_attacks():
         "ai_attacks": ai_attacks,
     }
 
+
+async def part5_assignment_suite():
+    """Hạng mục A: run Tests 1–4 and write results/audit/metrics."""
+    print("\n" + "=" * 60)
+    print("PART 5 / Hạng mục A: Defense pipeline suite")
+    print("=" * 60)
+    from assignment.pipeline import run_assignment_suite
+    results = await run_assignment_suite(student_id=STUDENT_ID)
+    print(json.dumps({
+        "safe_blocked": sum(1 for q in results["safe_queries"] if q["blocked"]),
+        "attacks_blocked": sum(1 for q in results["attack_queries"] if q["blocked"]),
+        "rate_limit": results["rate_limit"],
+    }, indent=2))
+    return results
 
 async def part2_guardrails():
     """Part 2: Implement and test guardrails."""
@@ -134,49 +160,16 @@ def part4_hitl():
     print("PART 4: Human-in-the-Loop Design")
     print("=" * 60)
 
-    from hitl.hitl import test_confidence_router, test_hitl_points
+    from hitl.hitl import test_confidence_router, test_hitl_points, demo_review_lifecycle
 
     # TODO 11: Confidence Router
     print("\n--- TODO 11: Confidence Router ---")
     test_confidence_router()
 
-    # TODO 12: HITL Decision Points
+    # TODO 12: HITL Decision Points + review lifecycle
     print("\n--- TODO 12: HITL Decision Points ---")
     test_hitl_points()
-
-
-async def part5_assignment_suite():
-    """Run defense suite → write outputs/results.json (+ audit/metrics)."""
-    import os
-
-    print("\n" + "=" * 60)
-    print("PART 5: Assignment suite → outputs/*.json")
-    print("=" * 60)
-
-    from assignment.pipeline import (
-        build_production_plugins,
-        build_observability,
-        run_assignment_suite,
-    )
-
-    student_id = os.environ.get("STUDENT_ID", "").strip() or "SE00000"
-    try:
-        plugins = build_production_plugins()
-        audit, monitor = build_observability()
-        pipeline = {"plugins": plugins, "audit": audit, "monitor": monitor}
-        result = await run_assignment_suite(pipeline, student_id=student_id)
-        print("Suite finished.")
-        print(f"Wrote outputs under repo outputs/ (student_id={student_id})")
-        return result
-    except NotImplementedError as e:
-        print(
-            "Chưa implement TODO 8 / run_assignment_suite trong "
-            "src/assignment/pipeline.py — hoàn thành rồi chạy lại:\n"
-            "  cd src\n"
-            "  python main.py --part 5"
-        )
-        print(f"Detail: {e}")
-        return None
+    demo_review_lifecycle()
 
 
 async def main(parts=None):
@@ -185,10 +178,13 @@ async def main(parts=None):
     Args:
         parts: List of part numbers to run, or None for all
     """
-    setup_api_key()
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+    if not setup_api_key(prompt=False):
+        print("WARNING: No LLM backend ready — LLM parts may fail or use offline fallbacks.")
 
     if parts is None:
-        parts = [1, 2, 3, 4]
+        parts = [1, 2, 3, 4, 5]
 
     for part in parts:
         if part == 1:
@@ -214,13 +210,8 @@ if __name__ == "__main__":
         description="Lab 11: Guardrails, HITL & Responsible AI"
     )
     parser.add_argument(
-        "--part",
-        type=int,
-        choices=[1, 2, 3, 4, 5],
-        help=(
-            "1=attacks, 2=guardrails, 3=testing, 4=HITL, "
-            "5=assignment suite→outputs/*.json"
-        ),
+        "--part", type=int, choices=[1, 2, 3, 4, 5],
+        help="Run only a specific part (1-5). Default: run all.",
     )
     args = parser.parse_args()
 

@@ -117,14 +117,17 @@ async def main() -> None:
             pass_live.append((name, prompt))
         print()
 
-    key = os.environ.get("GOOGLE_API_KEY", "").strip()
-    if not key:
+    from core.config import llm_ready, setup_api_key  # noqa: E402
+
+    if not llm_ready():
         print(
-            "No GOOGLE_API_KEY / .env — stopped before live LLM calls.\n"
-            "Add key to .env then re-run: python scripts/demo_attack_guards.py"
+            "No LLM backend (.env LAB_LLM=ollama or GOOGLE_API_KEY) — stopped "
+            "before live LLM calls.\n"
+            "Configure .env then re-run: python scripts/demo_attack_guards.py"
         )
         print(f"Prompts that would reach the model: {len(pass_live)}")
         return
+    setup_api_key(prompt=False)
 
     # Classic blocked + prompts that pass input filter
     sample = ATTACKS[:3] + pass_live

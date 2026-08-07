@@ -1,8 +1,8 @@
 """
-Assignment 11 — Rate Limiter starter (TODO).
+Assignment 11 — Rate Limiter.
 
-Sliding-window, per-user rate limiting. Blocks abuse that other
-guardrail layers do not address (flooding / cost attacks).
+Sliding-window, per-user rate limiting. Blocks flooding / cost attacks
+that other guardrail layers do not address.
 """
 from __future__ import annotations
 
@@ -24,6 +24,33 @@ class RateLimitPlugin(base_plugin.BasePlugin):
         self.blocked_count = 0
         self.total_count = 0
 
+    def allow(self, user_id: str = "anonymous") -> tuple[bool, str | None]:
+        """Pure-Python check used by DefensePipeline (no ADK required).
+
+        Returns (allowed, block_message_or_None).
+        """
+        self.total_count += 1
+        now = time.time()
+        window = self.user_windows[user_id]
+        cutoff = now - self.window_seconds
+        while window and window[0] < cutoff:
+            window.popleft()
+
+        if len(window) >= self.max_requests:
+            wait = self.window_seconds - (now - window[0])
+            self.blocked_count += 1
+            return False, f"Rate limit exceeded. Try again in {wait:.0f}s."
+
+        window.append(now)
+        return True, None
+
+    def reset(self, user_id: str | None = None):
+        """Clear windows (useful between test suites)."""
+        if user_id is None:
+            self.user_windows.clear()
+        else:
+            self.user_windows.pop(user_id, None)
+
     def _block_response(self, message: str) -> types.Content:
         return types.Content(
             role="model",
@@ -32,18 +59,8 @@ class RateLimitPlugin(base_plugin.BasePlugin):
 
     async def on_user_message_callback(self, *, invocation_context, user_message):
         """Return Content to block, or None to allow."""
-        self.total_count += 1
         user_id = getattr(invocation_context, "user_id", None) or "anonymous"
-        now = time.time()
-        window = self.user_windows[user_id]
-
-        # TODO: Implement sliding window:
-        # 1. Pop timestamps older than (now - window_seconds) from the left
-        # 2. If len(window) >= max_requests:
-        #       wait = window_seconds - (now - window[0])
-        #       self.blocked_count += 1
-        #       return self._block_response(
-        #           f"Rate limit exceeded. Try again in {wait:.0f}s."
-        #       )
-        # 3. Else: append now, return None
-        raise NotImplementedError("Implement RateLimitPlugin.on_user_message_callback")
+        allowed, message = self.allow(user_id)
+        if not allowed:
+            return self._block_response(message)
+        return None

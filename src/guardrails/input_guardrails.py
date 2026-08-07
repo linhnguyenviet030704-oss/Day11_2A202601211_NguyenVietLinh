@@ -1,8 +1,6 @@
 """
 Lab 11 — Part 2A: Input Guardrails
-  TODO 1: Injection detection (normalization + layered signals)
-  TODO 2: Topic filter
-  TODO 3: Input Guardrail Plugin (ADK)
+  Injection detection, topic filter, ADK InputGuardrailPlugin.
 """
 import re
 
@@ -10,41 +8,58 @@ from google.genai import types
 from google.adk.plugins import base_plugin
 from google.adk.agents.invocation_context import InvocationContext
 
+from agents.security_boundary import (
+    ExternalContent,
+    assess_external_content,
+    contains_instruction_override,
+    normalize_for_security,
+)
 from core.config import ALLOWED_TOPICS, BLOCKED_TOPICS
 
+# Max input length — blocks flooding / cost abuse that rate limit alone may miss.
+MAX_INPUT_LENGTH = 2000
 
-# ============================================================
-# TODO 1: Implement detect_injection()
-#
-# Canonicalize Unicode/invisible spacing, then detect prompt injection.
-# The function takes user_input (str) and returns True if injection is detected.
-#
-# Required cases:
-# - "ignore (all )?(previous|above) instructions"
-# - "you are now"
-# - "system prompt"
-# - "reveal your (instructions|prompt)"
-# - "pretend you are"
-# - "act as (a |an )?unrestricted"
-# Also handle an instruction embedded in an untrusted email/RAG document, e.g.
-# ``Ignore\u200b all previous instructions``. Do not block a benign request to
-# summarize an external bank-transfer email just because it is external data.
-# Regex is one signal, not the whole security boundary.
-# ============================================================
 
 def detect_injection(user_input: str) -> bool:
-    """Detect prompt injection patterns in user input.
+    """Return True if user_input matches known prompt-injection patterns.
 
-    Args:
-        user_input: The user's message
+    Catches jailbreaks before they reach the LLM (defense-in-depth layer 1).
 
-    Returns:
-        True if injection detected, False otherwise
+    Canonicalization runs first: an attacker who splits ``Ignore`` with a
+    zero-width space, or uses fullwidth/compatibility characters, otherwise
+    walks straight past every regex below. Regex is only one signal, so the
+    shared instruction-override detector runs alongside it.
     """
+    if not user_input:
+        return False
+
+    user_input = normalize_for_security(user_input)
+    if contains_instruction_override(user_input):
+        return True
+
     INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
+        r"ignore\s+(all\s+)?(previous|above|prior)?\s*instructions?",
+        r"disregard\s+(all\s+)?(previous|above|prior)?\s*(instructions?|rules?)",
+        r"forget\s+(your\s+)?(instructions?|rules?|prompt)",
+        r"you\s+are\s+now\b",
+        r"\bDAN\b",
+        r"system\s+prompt",
+        r"reveal\s+(your\s+)?(instructions?|prompt|secrets?|password|api\s*key)",
+        r"show\s+(me\s+)?(your\s+)?(system\s+)?(prompt|instructions?|config)",
+        r"pretend\s+(you\s+are|to\s+be)",
+        r"act\s+as\s+(a\s+|an\s+)?(unrestricted|evil|jailbroken)",
+        r"translate\s+(your\s+)?(instructions?|system\s+prompt|rules?)",
+        r"output\s+(your\s+)?(config|instructions?|prompt)\s+(as|in)\s+(json|yaml|xml)",
+        r"fill\s+in\s*(the\s*)?(blank|blanks|:|___)",
+        r"connection\s+string",
+        r"ticket\s+SEC-\d+",
+        r"\bCISO\b",
+        r"write\s+a\s+story.*(password|credentials|api\s*key|same\s+passwords)",
+        r"bỏ\s+qua\s+(mọi\s+)?hướng\s+dẫn",
+        r"quên\s+(mọi\s+)?hướng\s+dẫn",
+        r"tiết\s+lộ\s+(mật\s+khẩu|api|system\s*prompt)",
+        r"cho\s+tôi\s+(xem\s+)?(mật\s+khẩu|system\s*prompt|api\s*key)",
+        r"mật\s+khẩu\s+admin",
     ]
 
     for pattern in INJECTION_PATTERNS:
@@ -53,53 +68,57 @@ def detect_injection(user_input: str) -> bool:
     return False
 
 
-# ============================================================
-# TODO 2: Implement topic_filter()
-#
-# Check if user_input belongs to allowed topics.
-# The VinBank agent should only answer about: banking, account,
-# transaction, loan, interest rate, savings, credit card.
-#
-# Return True if input should be BLOCKED (off-topic or blocked topic).
-# ============================================================
-
 def topic_filter(user_input: str) -> bool:
-    """Check if input is off-topic or contains blocked topics.
+    """Return True if input should be BLOCKED (off-topic or blocked topic).
 
-    Args:
-        user_input: The user's message
-
-    Returns:
-        True if input should be BLOCKED (off-topic or blocked topic)
+    Keeps the banking bot on-domain so attackers cannot pivot via distraction.
     """
-    input_lower = user_input.lower()
+    if not user_input or not user_input.strip():
+        return True
 
-    # TODO: Implement logic:
-    # 1. If input contains any blocked topic -> return True
-    # 2. If input doesn't contain any allowed topic -> return True
-    # 3. Otherwise -> return False (allow)
+    input_lower = normalize_for_security(user_input).lower()
 
-    pass  # Replace with your implementation
+    if any(b in input_lower for b in BLOCKED_TOPICS):
+        return True
+
+    if any(a in input_lower for a in ALLOWED_TOPICS):
+        return False
+
+    return True
 
 
-# ============================================================
-# TODO 3: Implement InputGuardrailPlugin
-#
-# This plugin blocks bad input BEFORE it reaches the LLM.
-# Fill in the on_user_message_callback method.
-#
-# NOTE: The callback uses keyword-only arguments (after *).
-#   - user_message is types.Content (not str)
-#   - Return types.Content to block, or None to pass through
-# ============================================================
+# Text arriving from these sources is data the agent reads, never instructions
+# it obeys — the provenance boundary for indirect prompt injection.
+UNTRUSTED_SOURCES = ("email", "rag", "document", "web", "tool_output", "attachment")
+
+
+def check_external_content(source: str, text: str) -> dict:
+    """Decide whether untrusted email/RAG text may be summarised as data.
+
+    Benign external content stays allowed; only an attempt to issue new
+    instructions from inside that content is rejected. This is what separates
+    "summarise this customer email" from "obey this customer email".
+    """
+    decision = assess_external_content(
+        ExternalContent(source=source, text=text, trusted=False)
+    )
+    return {
+        "source": source,
+        "trusted": False,
+        "preview": (text or "")[:120],
+        "allowed_as_data": decision.allowed,
+        "reason": decision.reason,
+    }
+
 
 class InputGuardrailPlugin(base_plugin.BasePlugin):
-    """Plugin that blocks bad input before it reaches the LLM."""
+    """ADK plugin: block bad input before it reaches the LLM."""
 
     def __init__(self):
         super().__init__(name="input_guardrail")
         self.blocked_count = 0
         self.total_count = 0
+        self.last_block_reason: str | None = None
 
     def _extract_text(self, content: types.Content) -> str:
         """Extract plain text from a Content object."""
@@ -123,28 +142,41 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         invocation_context: InvocationContext,
         user_message: types.Content,
     ) -> types.Content | None:
-        """Check user message before sending to the agent.
-
-        Returns:
-            None if message is safe (let it through),
-            types.Content if message is blocked (return replacement)
-        """
+        """Return None to allow, or Content to short-circuit with a block message."""
         self.total_count += 1
         text = self._extract_text(user_message)
 
-        # TODO: Implement logic:
-        # 1. Call detect_injection(text)
-        #    - If True: increment blocked_count, return self._block_response("...")
-        # 2. Call topic_filter(text)
-        #    - If True: increment blocked_count, return self._block_response("...")
-        # 3. If both are False: return None (let message through)
+        if not text.strip():
+            self.blocked_count += 1
+            self.last_block_reason = "empty_input"
+            return self._block_response(
+                "Please enter a banking-related question so I can help you."
+            )
 
-        pass  # Replace with your implementation
+        if len(text) > MAX_INPUT_LENGTH:
+            self.blocked_count += 1
+            self.last_block_reason = "input_too_long"
+            return self._block_response(
+                "Your message is too long. Please shorten it and try again."
+            )
 
+        if detect_injection(text):
+            self.blocked_count += 1
+            self.last_block_reason = "injection"
+            return self._block_response(
+                "I cannot process that request. I only help with VinBank banking questions."
+            )
 
-# ============================================================
-# Quick tests
-# ============================================================
+        if topic_filter(text):
+            self.blocked_count += 1
+            self.last_block_reason = "off_topic"
+            return self._block_response(
+                "I'm a VinBank assistant and can only help with banking-related questions."
+            )
+
+        self.last_block_reason = None
+        return None
+
 
 def test_injection_detection():
     """Test detect_injection with sample inputs."""

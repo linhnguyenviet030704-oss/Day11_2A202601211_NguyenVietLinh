@@ -144,12 +144,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# Local grade / run outputs
+# Local grade output. The four files below it are required deliverables in
+# SUBMISSION.md, so they are tracked on purpose rather than ignored:
+# outputs/results.json, attack_results.json, audit_log.json, metrics.json
 outputs/grade_report.json
-outputs/results.json
-outputs/attack_results.json
-outputs/audit_log.json
-outputs/metrics.json
 
 # Spyder project settings
 .spyderproject
